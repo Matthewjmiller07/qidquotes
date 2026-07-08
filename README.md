@@ -130,5 +130,5 @@ MIT
 
 ## See Also
 
-- Live at: [matthewmiller.dev/qidquotes](https://matthewmiller.dev/qidquotes)
-- How it works: [matthewmiller.dev/qidquotes-explainer](https://matthewmiller.dev)
+- Live at: [theothermatthewmiller.com/qidquotes](https://theothermatthewmiller.com/qidquotes)
+- How it works: [theothermatthewmiller.com/qidquotes-explainer](https://theothermatthewmiller.com)
