@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QidQuotes — Technical Overview</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #1a1a1a;
+    background: #fff;
+    padding: 48px 64px;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  h2 { font-size: 18px; font-weight: 700; margin: 36px 0 12px; border-bottom: 2px solid #e5e5e5; padding-bottom: 6px; }
+  h3 { font-size: 14px; font-weight: 700; margin: 20px 0 6px; color: #333; }
+  p { margin-bottom: 10px; }
+  ul, ol { margin: 8px 0 12px 24px; }
+  li { margin-bottom: 4px; }
+  code {
+    font-family: "SF Mono", "Fira Code", Consolas, monospace;
+    font-size: 12px;
+    background: #f4f4f4;
+    border: 1px solid #e0e0e0;
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+  pre {
+    font-family: "SF Mono", "Fira Code", Consolas, monospace;
+    font-size: 12px;
+    background: #f7f7f7;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 16px;
+    margin: 12px 0;
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.5;
+  }
+  .subtitle { color: #666; font-size: 15px; margin-bottom: 32px; }
+  .card {
+    background: #f9f9f9;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin: 12px 0;
+  }
+  .card h3 { margin-top: 0; }
+  .flow-step {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 10px;
+    align-items: flex-start;
+  }
+  .step-num {
+    background: #1a1a1a;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .step-body { flex: 1; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13px;
+  }
+  th {
+    background: #1a1a1a;
+    color: #fff;
+    text-align: left;
+    padding: 8px 12px;
+    font-weight: 600;
+  }
+  td { padding: 7px 12px; border-bottom: 1px solid #e5e5e5; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:nth-child(even) td { background: #fafafa; }
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+    margin-right: 4px;
+  }
+  .tag-free { background: #d4edda; color: #155724; }
+  .tag-paid { background: #fff3cd; color: #856404; }
+  .tag-free-tier { background: #cce5ff; color: #004085; }
+  .arch-diagram {
+    font-family: "SF Mono", "Fira Code", Consolas, monospace;
+    font-size: 12px;
+    background: #1a1a1a;
+    color: #f0f0f0;
+    border-radius: 8px;
+    padding: 20px;
+    margin: 12px 0;
+    line-height: 1.7;
+  }
+  .arch-diagram .comment { color: #888; }
+  .arch-diagram .highlight { color: #7ec8e3; }
+  .arch-diagram .green { color: #98c379; }
+  .arch-diagram .yellow { color: #e5c07b; }
+  .note {
+    background: #fffbea;
+    border-left: 4px solid #f0c040;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 6px 6px 0;
+  }
+  .note strong { display: block; margin-bottom: 3px; }
+  @media print {
+    body { padding: 24px 40px; }
+    h2 { page-break-before: auto; }
+    .arch-diagram { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    th { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .tag { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .note { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<h1>QidQuotes</h1>
+<p class="subtitle">Technical Infrastructure Overview &mdash; for recreation and understanding</p>
+
+<!-- ═══════════════════════════════════════════════════════ WHAT IS IT -->
+<h2>What It Does</h2>
+<p>
+  QidQuotes is a Telegram bot that captures funny or memorable quotes from family members,
+  generates a beautiful illustrated quote card using AI, archives everything in a Google Sheet,
+  and saves the image to a Google Photos album — all automatically.
+</p>
+<p>
+  You send a message in a Telegram group chat. The bot asks a few quick questions (who said it?
+  when? is it an eggcorn?), then fires off an AI image generation job. A minute or two later the
+  quote card appears in the chat.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════ ARCHITECTURE -->
+<h2>Architecture at a Glance</h2>
+
+<div class="arch-diagram">
+<span class="comment">┌──────────────────── EXTERNAL SERVICES ────────────────────────┐</span>
+│                                                                 │
+│  <span class="highlight">Telegram Group Chat</span>   &lt;──&gt;   <span class="green">Cloudflare Worker</span>               │
+│                                                                 │
+│  <span class="yellow">Google Sheets</span>         &lt;──    Worker reads/writes rows         │
+│  <span class="yellow">Google Photos</span>         &lt;──    Worker uploads finished images   │
+│  <span class="highlight">Replicate (GPT-Image-2)</span>        Worker submits jobs async    │
+│         └──&gt; webhook ──&gt; Worker when image is ready           │
+│                                                                 │
+<span class="comment">└─────────────────────────────────────────────────────────────────┘</span>
+
+<span class="comment">No database. No server. No always-on process.
+State lives in Telegram message text &amp; Google Sheets.
+The worker only runs when HTTP requests arrive.</span>
+</div>
+
+<p>The entire backend is a <strong>single Cloudflare Worker</strong> — a serverless function that wakes up
+on HTTP requests and goes back to sleep. There is no server to maintain, no database, and no
+monthly compute cost (Cloudflare's free tier is generous enough for family use).</p>
+
+<!-- ═══════════════════════════════════════════════════════ TECH STACK -->
+<h2>Tech Stack &amp; Services</h2>
+
+<table>
+  <tr>
+    <th>Layer</th>
+    <th>Technology</th>
+    <th>Cost</th>
+    <th>Purpose</th>
+  </tr>
+  <tr>
+    <td>Runtime</td>
+    <td>Cloudflare Workers</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Hosts the entire backend. Handles all HTTP routes.</td>
+  </tr>
+  <tr>
+    <td>Language</td>
+    <td>TypeScript (compiled by Wrangler)</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Type-safe source code. Wrangler bundles it for the Worker.</td>
+  </tr>
+  <tr>
+    <td>Bot interface</td>
+    <td>Telegram Bot API</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Receives messages, sends buttons, posts finished image cards.</td>
+  </tr>
+  <tr>
+    <td>Image generation</td>
+    <td>Replicate — openai/gpt-image-2</td>
+    <td><span class="tag tag-paid">Pay per use</span></td>
+    <td>AI model that generates the illustrated quote card.</td>
+  </tr>
+  <tr>
+    <td>Data store</td>
+    <td>Google Sheets</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Logs every quote (date, child, text, eggcorn flag, image URL).</td>
+  </tr>
+  <tr>
+    <td>Photo archive</td>
+    <td>Google Photos API</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Permanent home for every generated image in a shared album.</td>
+  </tr>
+  <tr>
+    <td>Config / roster</td>
+    <td>Google Sheets "Names" tab</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Lists family members, birthdays, and reference photo URLs.</td>
+  </tr>
+  <tr>
+    <td>Auth (Sheets)</td>
+    <td>Google Service Account (JWT)</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Worker signs its own JWTs to call Sheets API — no OAuth flow.</td>
+  </tr>
+  <tr>
+    <td>Auth (Photos)</td>
+    <td>Google OAuth2 refresh token</td>
+    <td><span class="tag tag-free">Free</span></td>
+    <td>Long-lived refresh token obtained once; worker exchanges for access tokens.</td>
+  </tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ FILE STRUCTURE -->
+<h2>Project File Structure</h2>
+
+<pre>QidQuotes/
+├── src/
+│   ├── index.ts        — HTTP router: routes requests to the right handler
+│   ├── handler.ts      — All business logic (Telegram flows, quote processing)
+│   ├── telegram.ts     — Telegram API helpers (send messages, parse bot state)
+│   ├── replicate.ts    — AI image generation (build prompt, call Replicate)
+│   ├── sheets.ts       — Google Sheets read/write (names tab + quotes log)
+│   ├── photos.ts       — Google Photos upload
+│   ├── age.ts          — Age calculation + adult detection from birthday
+│   └── types.ts        — TypeScript type definitions
+├── scripts/
+│   ├── set-webhook.mjs       — One-time script: register bot webhook with Telegram
+│   ├── get-photos-auth.mjs   — One-time script: obtain Google Photos refresh token
+│   └── rerun.gs              — Google Apps Script: trigger image regeneration from Sheet
+├── wrangler.toml       — Cloudflare Worker config
+└── package.json</pre>
+
+<!-- ═══════════════════════════════════════════════════════ USER FLOWS -->
+<h2>User Flows (Step by Step)</h2>
+
+<p>There are three ways to submit a quote. All paths eventually reach the same image generation pipeline.</p>
+
+<h3>Flow B — Plain message (most common)</h3>
+<div class="card">
+  <div class="flow-step"><div class="step-num">1</div><div class="step-body">User types the quote as a plain message in the Telegram group.</div></div>
+  <div class="flow-step"><div class="step-num">2</div><div class="step-body">Bot replies: <em>"Who said this quote?"</em> with inline buttons — one per family member. Includes a tip about scene hints.</div></div>
+  <div class="flow-step"><div class="step-num">3</div><div class="step-body">User taps a name. Bot asks: <em>"When was this said?"</em> — Today / Yesterday buttons, or type a date.</div></div>
+  <div class="flow-step"><div class="step-num">4</div><div class="step-body">Bot asks: <em>"Is this an eggcorn?"</em> — Yes / No. (An eggcorn is a charming word misuse, e.g. "escape goat" for "scapegoat".)</div></div>
+  <div class="flow-step"><div class="step-num">5</div><div class="step-body">Bot confirms and kicks off image generation asynchronously.</div></div>
+  <div class="flow-step"><div class="step-num">6</div><div class="step-body">~60–90 seconds later, the finished quote card image appears in the chat.</div></div>
+</div>
+
+<h3>Flow A — Pre-tagged shortcut</h3>
+<div class="card">
+  <p>Send the quote in a structured format to skip the name-selection step:</p>
+  <pre>Aviya||I love bears
+Aviya|05/20/2026||I love bears</pre>
+  <p>Format: <code>Name||quote</code> or <code>Name|MM/DD/YYYY||quote</code>. Goes straight to the eggcorn question.</p>
+</div>
+
+<h3>Scene hints (optional enhancement)</h3>
+<div class="card">
+  <p>Add <code>(description)</code> at the end of any quote to guide what the illustration shows:</p>
+  <pre>I love bears (bears dancing)
+Ezra is my best friend (Lielle jumping with Ezra)</pre>
+  <p>The text inside parentheses is stripped from the quote card text but added to the AI image prompt. If it mentions a family member's name, their reference photo is also pulled in.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ STATE MGMT -->
+<h2>How State Is Carried Between Button Presses</h2>
+
+<p>
+  Cloudflare Workers are stateless — there is no in-memory session between requests.
+  Instead, the bot embeds state directly in the text of each bot message using encoded tags.
+  When a button is pressed, the callback reads the message text to recover context.
+</p>
+
+<table>
+  <tr>
+    <th>Message</th>
+    <th>Encoded format</th>
+    <th>Fields carried</th>
+  </tr>
+  <tr>
+    <td>Date selector</td>
+    <td><code>📅 [Name|quote text||scene hint]</code></td>
+    <td>child name, quote, scene hint</td>
+  </tr>
+  <tr>
+    <td>Eggcorn selector</td>
+    <td><code>🥚 [Name|quote text||date||scene hint]</code></td>
+    <td>child name, quote, date, scene hint</td>
+  </tr>
+</table>
+
+<p>This is a simple and robust pattern — it requires no database and survives Worker restarts.</p>
+
+<!-- ═══════════════════════════════════════════════════════ IMAGE GENERATION -->
+<h2>Image Generation Pipeline</h2>
+
+<p>When the user taps Yes/No on the eggcorn question, <code>processQuote</code> runs:</p>
+
+<div class="flow-step"><div class="step-num">1</div><div class="step-body"><strong>Log first.</strong> The quote is appended to Google Sheets immediately (with a blank image URL column). This gives it a row number.</div></div>
+<div class="flow-step"><div class="step-num">2</div><div class="step-body"><strong>Build the AI prompt.</strong> The prompt is assembled from: card style, reference image descriptions, who to depict (speaker as central character), scene hint, quote text, attribution, and eggcorn note if applicable.</div></div>
+<div class="flow-step"><div class="step-num">3</div><div class="step-body"><strong>Fetch reference photos.</strong> The speaker's photo (if available) is downloaded and base64-encoded. Photos of any mentioned family members are also fetched. These are sent to the model as <code>input_images</code>.</div></div>
+<div class="flow-step"><div class="step-num">4</div><div class="step-body"><strong>Submit to Replicate (async).</strong> The Worker POSTs to Replicate with a <code>webhook</code> URL pointing back to <code>/webhook/replicate?child=…&amp;quote=…&amp;row=…</code>. The Worker returns 200 immediately — it does not wait for the image.</div></div>
+<div class="flow-step"><div class="step-num">5</div><div class="step-body"><strong>Replicate calls back.</strong> When the image is done (~60–90 s), Replicate POSTs the result to the webhook URL.</div></div>
+<div class="flow-step"><div class="step-num">6</div><div class="step-body"><strong>Post to Telegram.</strong> The Worker downloads the image bytes and sends them directly to the Telegram group chat with a caption.</div></div>
+<div class="flow-step"><div class="step-num">7</div><div class="step-body"><strong>Archive to Google Photos.</strong> Image uploaded to a shared family album. The resulting permanent URL is written back to column F of the Google Sheet row.</div></div>
+
+<h3>AI prompt structure</h3>
+<p>The prompt is assembled in layers so each part is independent and composable:</p>
+
+<pre>[Card style: "children's" or plain based on whether speaker is adult]
+[Reference image N shows [name]. ...]     ← only if photos provided
+[Portrait instruction]                     ← only if speaker has photo
+[Depiction: speaker as central character + any mentioned people]
+[Scene inspiration from quote text + scene hint]
+[Card text / attribution at the bottom]
+[Eggcorn note]                             ← only if flagged</pre>
+
+<!-- ═══════════════════════════════════════════════════════ PEOPLE SYSTEM -->
+<h2>People / Names System</h2>
+
+<p>
+  The <strong>"Names" tab</strong> of the Google Sheet is the entire roster of people the bot knows about.
+  The Worker reads it fresh on every request — no code changes needed to add people.
+</p>
+
+<table>
+  <tr>
+    <th>Column A</th>
+    <th>Column B</th>
+    <th>Columns C, D, E …</th>
+  </tr>
+  <tr>
+    <td>Name</td>
+    <td>Birthday (MM/DD/YYYY)</td>
+    <td>Photo URL 1, Photo URL 2, … (any number)</td>
+  </tr>
+</table>
+
+<p><strong>Adult detection:</strong> anyone whose birthday makes them ≥18 years old is treated as an adult.
+This changes the image prompt (no "children's" style, speaker referred to by name not "the child",
+age omitted from attribution). This applies automatically to grandparents, parents, etc.
+No code change needed — just add them with a real birthday.</p>
+
+<p><strong>Likeness inclusion:</strong> if a family member's name appears in the quote text <em>or</em> the scene hint, their photo is pulled as an AI reference image and they are explicitly named in the "depict" part of the prompt.</p>
+
+<!-- ═══════════════════════════════════════════════════════ QUOTES SHEET -->
+<h2>Quotes Log (Google Sheet)</h2>
+
+<table>
+  <tr>
+    <th>Col A</th>
+    <th>Col B</th>
+    <th>Col C</th>
+    <th>Col D</th>
+    <th>Col E</th>
+    <th>Col F</th>
+  </tr>
+  <tr>
+    <td>Date</td>
+    <td>Time</td>
+    <td>Name</td>
+    <td>Quote text</td>
+    <td>Eggcorn ("yes" or blank)</td>
+    <td>Image URL (Google Photos)</td>
+  </tr>
+</table>
+
+<p>The row is written immediately when a quote is submitted (col F blank). Col F is updated once the image is generated and uploaded to Google Photos (~1–2 min later).</p>
+
+<!-- ═══════════════════════════════════════════════════════ HTTP ROUTES -->
+<h2>HTTP Routes (the Worker's API)</h2>
+
+<table>
+  <tr>
+    <th>Route</th>
+    <th>Caller</th>
+    <th>What it does</th>
+  </tr>
+  <tr>
+    <td><code>POST /</code></td>
+    <td>Telegram (webhook)</td>
+    <td>Receives all Telegram updates (messages + button presses). Dispatches to handler logic.</td>
+  </tr>
+  <tr>
+    <td><code>POST /webhook/replicate</code></td>
+    <td>Replicate</td>
+    <td>Called when an image generation job finishes. Posts image to Telegram, uploads to Photos, updates Sheet.</td>
+  </tr>
+  <tr>
+    <td><code>POST /rerun</code></td>
+    <td>Google Apps Script (manual)</td>
+    <td>Regenerates the image for an existing row. Protected by a shared secret. Accepts optional <code>sceneHint</code> and <code>isEggcorn</code>.</td>
+  </tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ SECRETS -->
+<h2>Secrets &amp; Environment Variables</h2>
+
+<p>All secrets are stored as Cloudflare Worker secrets (never in code or git). Set them once with <code>wrangler secret put &lt;NAME&gt;</code>.</p>
+
+<table>
+  <tr>
+    <th>Secret name</th>
+    <th>Where to get it</th>
+  </tr>
+  <tr>
+    <td><code>TELEGRAM_BOT_TOKEN</code></td>
+    <td>Create a bot via @BotFather on Telegram. Token is shown immediately.</td>
+  </tr>
+  <tr>
+    <td><code>REPLICATE_API_TOKEN</code></td>
+    <td>replicate.com → Account Settings → API tokens.</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_SHEETS_ID</code></td>
+    <td>The long ID in your Google Sheet URL: <code>docs.google.com/spreadsheets/d/<strong>THIS_PART</strong>/edit</code></td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_SERVICE_ACCOUNT_EMAIL</code></td>
+    <td>Google Cloud Console → IAM &amp; Admin → Service Accounts → create one → copy the email.</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_PRIVATE_KEY</code></td>
+    <td>Same service account → Keys → Add Key → JSON → copy the <code>private_key</code> field (full PEM block).</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_PHOTOS_CLIENT_ID</code></td>
+    <td>Google Cloud Console → APIs &amp; Services → Credentials → OAuth 2.0 Client ID (Desktop app type).</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_PHOTOS_CLIENT_SECRET</code></td>
+    <td>Same OAuth credential.</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_PHOTOS_REFRESH_TOKEN</code></td>
+    <td>Run <code>node scripts/get-photos-auth.mjs</code> once — it opens a browser, you approve, it prints the refresh token.</td>
+  </tr>
+  <tr>
+    <td><code>GOOGLE_PHOTOS_ALBUM_ID</code></td>
+    <td>Google Photos → create an album → get its ID from the URL or the auth script output.</td>
+  </tr>
+  <tr>
+    <td><code>RERUN_SECRET</code></td>
+    <td>Any random string you choose. Must match what the Apps Script sends.</td>
+  </tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ SETUP -->
+<h2>Setup &amp; Deployment (from scratch)</h2>
+
+<ol>
+  <li>
+    <strong>Prerequisites:</strong> Node.js 18+, a Cloudflare account (free), a Telegram account, a Google account with Google Cloud Console access, a Replicate account.
+  </li>
+  <li>
+    <strong>Clone the repo</strong> and run <code>npm install</code>.
+  </li>
+  <li>
+    <strong>Create the Telegram bot:</strong> message @BotFather → <code>/newbot</code> → follow prompts → copy the token.
+  </li>
+  <li>
+    <strong>Set up Google Cloud:</strong>
+    <ul>
+      <li>Create a project. Enable: Google Sheets API, Google Photos Library API.</li>
+      <li>Create a Service Account. Download its JSON key. Share your Google Sheet with the service account email (Editor role).</li>
+      <li>Create an OAuth 2.0 Client ID (Desktop app). Download credentials JSON.</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Get the Google Photos refresh token:</strong> <code>node scripts/get-photos-auth.mjs</code>. Follow the browser prompt. Copy the printed refresh token.
+  </li>
+  <li>
+    <strong>Set up the Google Sheet:</strong>
+    <ul>
+      <li>Create a sheet with two tabs: <strong>Names</strong> and <strong>Quotes</strong>.</li>
+      <li>Names tab columns: Name | Birthday (MM/DD/YYYY) | Photo URL 1 | Photo URL 2 | …</li>
+      <li>Quotes tab columns: Date | Time | Name | Quote | Eggcorn | Image URL</li>
+      <li>Row 1 in both tabs should be headers (skipped automatically by the worker).</li>
+    </ul>
+  </li>
+  <li>
+    <strong>Deploy the Worker:</strong> <code>npm run deploy</code>. Note the worker URL printed at the end (e.g. <code>https://qid-quotes.your-subdomain.workers.dev</code>).
+  </li>
+  <li>
+    <strong>Set all secrets:</strong> run <code>wrangler secret put &lt;NAME&gt;</code> for each secret listed above.
+  </li>
+  <li>
+    <strong>Register the Telegram webhook:</strong> <code>npm run webhook:set</code>. This tells Telegram to send all bot updates to your Worker URL.
+  </li>
+  <li>
+    <strong>Add the bot to your Telegram group</strong> and send it a test quote.
+  </li>
+</ol>
+
+<!-- ═══════════════════════════════════════════════════════ AUTH NOTES -->
+<h2>Authentication Details</h2>
+
+<h3>Google Sheets — Service Account JWT</h3>
+<p>
+  The Worker authenticates to Google Sheets by building a signed JWT itself, using the service account's
+  private key (stored as a Worker secret). It exchanges the JWT for a short-lived access token on each
+  request. No OAuth flow, no redirect, no user involvement — fully automated.
+</p>
+
+<h3>Google Photos — OAuth2 Refresh Token</h3>
+<p>
+  Google Photos requires user OAuth (it touches personal photo libraries). The one-time setup script
+  (<code>get-photos-auth.mjs</code>) opens a browser, you approve access, and it prints a long-lived
+  refresh token. The Worker stores this token as a secret and exchanges it for a new access token
+  on each upload.
+</p>
+
+<h3>Replicate — Simple API token</h3>
+<p>Replicate uses a plain Bearer token in the Authorization header. No complexity.</p>
+
+<!-- ═══════════════════════════════════════════════════════ NOTES -->
+<h2>Design Decisions Worth Knowing</h2>
+
+<div class="note">
+  <strong>Why Cloudflare Workers?</strong>
+  Generous free tier (100,000 requests/day), global edge deployment, and zero maintenance.
+  No server to babysit. The whole backend is one <code>npm run deploy</code>.
+</div>
+
+<div class="note">
+  <strong>Why no database?</strong>
+  State is encoded in Telegram message text between steps, so the Worker can be stateless.
+  Persistent data (quotes, names) lives in Google Sheets which the family can view and edit directly.
+</div>
+
+<div class="note">
+  <strong>Why async image generation?</strong>
+  AI image generation takes 60–90 seconds, far longer than the 30-second limit Telegram
+  allows for a webhook response. The Worker submits the job to Replicate and returns 200
+  immediately. Replicate calls back the Worker when the image is ready.
+</div>
+
+<div class="note">
+  <strong>Why GPT-Image-2 on Replicate?</strong>
+  It supports multiple reference images (<code>input_images</code>) so family member photos
+  can guide the likeness in the illustration. Replicate also handles async webhooks natively.
+</div>
+
+<div class="note">
+  <strong>Photo URLs in the Names tab:</strong>
+  Any publicly accessible image URL works. Google Drive share links and Dropbox share links
+  also work (the Worker follows redirects when fetching photos).
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ FOOTER -->
+<hr style="margin: 48px 0 24px; border: none; border-top: 1px solid #e5e5e5;">
+<p style="color: #888; font-size: 12px;">
+  QidQuotes &mdash; all code lives in <code>src/</code>.
+  No framework, no ORM, no auth library — just TypeScript and fetch().
+</p>
+
+</body>
+</html>
