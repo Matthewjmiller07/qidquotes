@@ -1048,6 +1048,25 @@ async function fetchImageBytes(source: string): Promise<{ bytes: ArrayBuffer; co
   return { bytes, contentType };
 }
 
+// ─── /regen — batch-regenerate sheet rows through the normal async webhook flow ──
+// Same as tapping 🔄 Regenerate with default reference/theme; cards post to Telegram.
+
+export async function handleRegenBatch(request: Request, env: Env, workerOrigin: string): Promise<Response> {
+  const json = await request.json() as { secret?: string; rows?: number[]; model?: 'gpt' | 'flux' };
+  if (!env.RERUN_SECRET || json.secret !== env.RERUN_SECRET) {
+    return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
+  const rows = (json.rows ?? []).filter((r) => Number.isInteger(r) && r > 1);
+  if (rows.length === 0) {
+    return Response.json({ ok: false, error: 'No rows' }, { status: 400 });
+  }
+  const children = await loadChildren(env);
+  for (const row of rows) {
+    await triggerRegen(row, env, children, workerOrigin, undefined, undefined, undefined, json.model ?? 'gpt');
+  }
+  return Response.json({ ok: true, submitted: rows });
+}
+
 // ─── /rerun endpoint — called from Google Sheets Apps Script ─────────────────
 
 export async function handleRerun(request: Request, env: Env): Promise<Response> {
