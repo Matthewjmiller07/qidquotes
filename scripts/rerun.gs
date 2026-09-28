@@ -1,5 +1,7 @@
 var WORKER_URL = 'https://qid-quotes.parasha.workers.dev';
-var RERUN_SECRET = 'Gutezachen123!';
+// Must match the worker's RERUN_SECRET (wrangler secret put RERUN_SECRET).
+// Paste the real value in the Apps Script editor only — never commit it.
+var RERUN_SECRET = 'PASTE_RERUN_SECRET_HERE';
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -8,24 +10,9 @@ function onOpen() {
     .addToUi();
 }
 
-function pad2(n) {
-  return n < 10 ? '0' + n : '' + n;
-}
-
-// Returns the first column letter (starting from F) that is empty in ALL rows of the selection.
-function nextBatchCol(sheet, firstRow, lastRow) {
-  var numRows = lastRow - firstRow + 1;
-  var block = sheet.getRange(firstRow, 6, numRows, 20).getValues(); // F through Y
-  for (var col = 0; col < 20; col++) {
-    var allEmpty = true;
-    for (var row = 0; row < block.length; row++) {
-      if (block[row][col]) { allEmpty = false; break; }
-    }
-    if (allEmpty) { return String.fromCharCode(70 + col); } // 70='F'
-  }
-  return String.fromCharCode(70 + 20);
-}
-
+// Calls the worker's /regen endpoint — the same path as the Telegram 🔄 Regenerate
+// button (reference photos, Telegram post, sheet write-back). The worker picks the
+// column, so this script only sends row numbers.
 function rerunSelectedRows() {
   var ui = SpreadsheetApp.getUi();
   var sheet = SpreadsheetApp.getActiveSheet();
@@ -33,81 +20,38 @@ function rerunSelectedRows() {
   var startRow = range.getRow();
   var numRows = range.getNumRows();
 
+  // Skip header row if selected
   if (startRow === 1) { startRow = 2; numRows = numRows - 1; }
   if (numRows <= 0) { ui.alert('Select at least one data row.'); return; }
 
-  var lastRow = startRow + numRows - 1;
-
-  // Collect rows with data
+  // Collect rows that have a child and a quote
+  var values = sheet.getRange(startRow, 1, numRows, 4).getValues();
   var rows = [];
-  for (var i = 0; i < numRows; i++) {
-    var row = startRow + i;
-    var rowData = sheet.getRange(row, 1, 1, 4).getValues()[0];
-    var childName = rowData[2];
-    var quoteText = rowData[3];
-    if (childName && quoteText) {
-      rows.push({ row: row, date: rowData[0], childName: childName, quoteText: quoteText });
-    }
+  for (var i = 0; i < values.length; i++) {
+    if (values[i][2] && values[i][3]) rows.push(startRow + i);
   }
-
   if (rows.length === 0) { ui.alert('No data rows found in selection.'); return; }
 
-  // One column for the whole batch
-  var col = nextBatchCol(sheet, startRow, lastRow);
-
+  // One request per row keeps each worker run small.
   var errors = [];
-  var successes = 0;
-
   for (var j = 0; j < rows.length; j++) {
-    var item = rows[j];
-    var progress = (j + 1) + ' of ' + rows.length;
-
-    SpreadsheetApp.getActive().toast(
-      item.childName + ': "' + item.quoteText.substring(0, 40) + '"',
-      'Generating ' + progress + ' -> col ' + col,
-      120
-    );
-
-    var dateStr = '';
-    if (item.date instanceof Date) {
-      dateStr = pad2(item.date.getMonth() + 1) + '/' + pad2(item.date.getDate()) + '/' + item.date.getFullYear();
-    }
-
+    SpreadsheetApp.getActive().toast('Row ' + rows[j], 'Submitting ' + (j + 1) + ' of ' + rows.length, 10);
     try {
-      var payload = JSON.stringify({
-        secret: RERUN_SECRET,
-        childName: item.childName,
-        quoteText: item.quoteText,
-        date: dateStr,
-        row: item.row,
-        col: col
-      });
-
-      var resp = UrlFetchApp.fetch(WORKER_URL + '/rerun', {
+      var resp = UrlFetchApp.fetch(WORKER_URL + '/regen', {
         method: 'post',
         contentType: 'application/json',
-        payload: payload,
-        muteHttpExceptions: true,
-        deadline: 120
+        payload: JSON.stringify({ secret: RERUN_SECRET, rows: [rows[j]], model: 'gpt' }),
+        muteHttpExceptions: true
       });
-
       var result = JSON.parse(resp.getContentText());
-      if (result.ok) {
-        successes++;
-        SpreadsheetApp.getActive().toast(
-          'Saved to col ' + col,
-          'Done ' + progress,
-          4
-        );
-      } else {
-        errors.push('Row ' + item.row + ' (' + item.childName + '): ' + result.error);
-      }
+      if (!result.ok) errors.push('Row ' + rows[j] + ': ' + result.error);
     } catch (e) {
-      errors.push('Row ' + item.row + ' (' + item.childName + '): ' + e.message);
+      errors.push('Row ' + rows[j] + ': ' + e.message);
     }
   }
 
-  var msg = successes + ' of ' + rows.length + ' images regenerated into column ' + col + '.';
-  if (errors.length > 0) { msg += '\n\nFailed:\n' + errors.join('\n'); }
+  var msg = (rows.length - errors.length) + ' of ' + rows.length +
+    ' submitted. Cards will arrive in Telegram and the sheet in ~30s each.';
+  if (errors.length > 0) msg += '\n\nFailed:\n' + errors.join('\n');
   ui.alert(msg);
 }
