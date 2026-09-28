@@ -287,7 +287,9 @@ async function buildInput(
   const ctx = await buildSceneContext(child, quoteText, quoteDate, allPeople, env, sceneHint, uploadedFileId, referenceImageUrl, secondChild, theme);
   const prompt = buildCardPrompt(ctx, quoteText, quoteDate, tag, sceneHint, secondChild, secondQuoteText, dialogOrder);
 
-  const input: Record<string, unknown> = { prompt, quality: 'low', aspect_ratio: '3:2', ...(env.OPENAI_API_KEY ? { openai_api_key: env.OPENAI_API_KEY } : {}) };
+  // No openai_api_key — Replicate bills the run. (A BYO key that OpenAI rejects surfaces
+  // from Replicate as a misleading E003 "high demand" error.)
+  const input: Record<string, unknown> = { prompt, quality: 'low', aspect_ratio: '3:2' };
   if (ctx.referenceImages.length > 0) {
     input.input_images = ctx.referenceImages;
   }
@@ -297,8 +299,7 @@ async function buildInput(
 
 // Async submit for the budget path — same webhook contract, same full prompt, and same
 // input shape as submitQuoteImageAsync, but hits gpt-image-1-mini instead of gpt-image-2.
-// Billed straight to the OpenAI key (Replicate charges nothing for BYO-key official
-// models): ~$0.004–0.006 per low-quality 3:2 image, roughly a third of premium. Same
+// Billed via Replicate, roughly a third of premium per low-quality 3:2 image. Same
 // model family, so reference-photo likeness and legible card text carry over.
 // (The 'flux' model identifier in callback data / webhook URLs is kept for compatibility.)
 export async function submitBudgetQuoteImageAsync(
@@ -467,4 +468,29 @@ export async function generateQuoteImage(
   const imageUrl = Array.isArray(output) ? output[0] : output;
   if (!imageUrl) throw new Error('Replicate returned no image URL');
   return imageUrl;
+}
+
+// Resubmit a failed prediction with the exact input Replicate echoed back in the webhook.
+// Strips any openai_api_key left over from predictions submitted by older deploys.
+export async function resubmitPrediction(
+  model: string,
+  input: Record<string, unknown>,
+  webhookUrl: string,
+  env: Env,
+): Promise<string> {
+  const { openai_api_key: _dropped, ...body } = input;
+  const res = await fetch(`https://api.replicate.com/v1/models/${model}/predictions`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Token ${env.REPLICATE_API_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ input: body, webhook: webhookUrl, webhook_events_filter: ['completed'] }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Replicate resubmit error ${res.status}: ${err}`);
+  }
+  const data = await res.json() as { id: string };
+  return data.id;
 }

@@ -251,7 +251,6 @@ async function submitToReplicate(
     prompt,
     quality: 'low',
     aspect_ratio: '3:2',
-    ...(env.OPENAI_API_KEY ? { openai_api_key: env.OPENAI_API_KEY } : {}),
   };
   if (referenceImages.length > 0) input.input_images = referenceImages;
   const res = await fetch('https://api.replicate.com/v1/models/openai/gpt-image-2/predictions', {

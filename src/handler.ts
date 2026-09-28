@@ -1,5 +1,5 @@
 import { appendQuote, updateQuoteImage, loadChildren, addNameToSheet, addPhotoToNamesTab, readQuoteRow, updatePersonSceneHint } from './sheets';
-import { submitQuoteImageAsync, submitBudgetQuoteImageAsync, generateQuoteImage } from './replicate';
+import { submitQuoteImageAsync, submitBudgetQuoteImageAsync, generateQuoteImage, resubmitPrediction } from './replicate';
 import { uploadToGooglePhotos } from './photos';
 import { getAge, isAdult } from './age';
 import {
@@ -836,6 +836,9 @@ async function processDialogQuote(
 
 // ─── Replicate webhook — called by Replicate when image generation completes ──
 
+const MAX_TRANSIENT_RETRIES = 2;
+const TRANSIENT_RETRY_DELAY_MS = 15_000;
+
 export async function handleReplicateWebhook(bodyText: string, url: URL, env: Env): Promise<void> {
   const row = parseInt(url.searchParams.get('row') ?? '0', 10);
   const childName = url.searchParams.get('child') ?? '';
@@ -854,7 +857,7 @@ export async function handleReplicateWebhook(bodyText: string, url: URL, env: En
   const col2 = url.searchParams.get('col2') ?? 'G';
   const dialogOrder = (url.searchParams.get('dialogOrder') ?? '') as 'before' | 'after' | '';
 
-  let body: { status: string; output: string | string[] | null; error?: string };
+  let body: { id?: string; status: string; output: string | string[] | null; error?: string; model?: string; input?: Record<string, unknown>; metrics?: { predict_time?: number } };
   try {
     body = JSON.parse(bodyText);
   } catch {
@@ -862,9 +865,31 @@ export async function handleReplicateWebhook(bodyText: string, url: URL, env: En
     return;
   }
 
+  const attempt = parseInt(url.searchParams.get('attempt') ?? '0', 10);
+  console.log('Replicate webhook', JSON.stringify({
+    id: body.id, model: body.model, status: body.status, attempt,
+    predictTime: body.metrics?.predict_time, error: body.error, child: childName, row,
+  }));
+
   if (body.status !== 'succeeded' || !body.output) {
-    console.error('Replicate webhook: prediction did not succeed', body.status, body.error);
-    const errDetail = body.error ? ` — ${body.error}` : '';
+    // Capacity errors (E003 "high demand" etc.) — resubmit the same input after a pause.
+    const transient = /E003|high demand|unavailable|try again later/i.test(body.error ?? '');
+    if (transient && attempt < MAX_TRANSIENT_RETRIES && body.input && body.model) {
+      const nextAttempt = attempt + 1;
+      const retryUrl = new URL(url);
+      retryUrl.searchParams.set('attempt', String(nextAttempt));
+      try {
+        await new Promise((r) => setTimeout(r, TRANSIENT_RETRY_DELAY_MS));
+        const newId = await resubmitPrediction(body.model, body.input, retryUrl.toString(), env);
+        console.log(`Replicate webhook: retry ${nextAttempt} submitted as ${newId} on ${body.model}`);
+        return;
+      } catch (err) {
+        console.error('Replicate webhook: retry submit failed', err);
+      }
+    }
+
+    const errDetail = (body.error ? ` — ${body.error}` : '') +
+      ` [${body.id ?? '?'}, attempt ${attempt}]`;
     const regenMarkup = row > 0
       ? { inline_keyboard: [[{ text: '🔄 Retry', callback_data: `regen:${row}` }]] }
       : undefined;
