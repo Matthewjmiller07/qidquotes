@@ -189,15 +189,24 @@ async function buildSceneContext(
 
   // Scene reference goes last and is labelled by its actual position, so it can't be
   // confused with a person even if an earlier photo failed to load.
+  // 'exact:<fileId>' recreates the pictured place; 'loose:<fileId>' or a bare id only inspires.
   if (sceneRefFileId) {
+    const exact = sceneRefFileId.startsWith('exact:');
+    const fileId = sceneRefFileId.replace(/^(exact|loose):/, '');
     try {
-      referenceImages.push(await fetchTelegramPhotoAsDataUri(sceneRefFileId, env));
+      referenceImages.push(await fetchTelegramPhotoAsDataUri(fileId, env));
+      const n = referenceImages.length;
       imageLines.push(
-        `Reference image ${referenceImages.length} is scene inspiration only: use it to shape the setting, objects, composition and mood. ` +
-        `Do not take anyone's appearance from it — every person must look like their own reference image or description.`,
+        (exact
+          ? `Reference image ${n} shows a real place that must be the setting of the illustration. ` +
+            `Recreate that exact place faithfully so it is instantly recognizable: keep its architecture, shape, proportions, ` +
+            `colors, materials, roof, windows, doors, and surrounding features (trees, fences, paths) as they appear in reference image ${n}, ` +
+            `only translated into the requested art style. Do not invent a different building or setting. `
+          : `Reference image ${n} is scene inspiration only: use it to shape the setting, objects, composition and mood. `) +
+        `Do not take anyone's appearance from reference image ${n} — every person must look like their own reference image or description.`,
       );
     } catch (err) {
-      console.error(`Could not load scene reference ${sceneRefFileId}:`, err);
+      console.error(`Could not load scene reference ${fileId}:`, err);
     }
   }
 

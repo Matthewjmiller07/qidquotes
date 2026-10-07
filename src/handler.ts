@@ -32,6 +32,8 @@ import {
   parseThemeSelectorMessage,
   sendSceneRefSelector,
   parseSceneRefSelectorMessage,
+  sendSceneRefStrengthSelector,
+  parseSceneRefStrengthMessage,
   sendModelSelector,
   parseModelSelectorMessage,
   sendRegenThemeSelector,
@@ -102,7 +104,7 @@ async function handleMessage(
   if (repliedText.startsWith('🖼️ SCENE REF [') && uploadedFileId) {
     const parsed = parseSceneRefSelectorMessage(repliedText);
     if (!parsed) return;
-    await sendModelSelector({ ...parsed, sceneRefFileId: uploadedFileId }, message.message_id, env);
+    await sendSceneRefStrengthSelector({ ...parsed, sceneRefFileId: uploadedFileId }, message.message_id, env);
     return;
   }
 
@@ -540,6 +542,19 @@ async function handleCallbackQuery(
     const themeLabel = themeLabels[theme] ?? theme;
     await answerCallbackQuery(cb.id, `${themeLabel} selected!`, env);
     await sendSceneRefSelector({ ...parsed, theme }, msgId, env);
+    return;
+  }
+
+  // ── Scene reference strength chosen → ask which engine to use ───────────
+  if (data.startsWith('sceneref_strength:')) {
+    const strength = data === 'sceneref_strength:exact' ? 'exact' : 'loose';
+    const msgText = cb.message?.text ?? '';
+    const parsed = parseSceneRefStrengthMessage(msgText);
+    if (!parsed) return;
+    const msgId = cb.message?.message_id;
+    if (!msgId) return;
+    await answerCallbackQuery(cb.id, strength === 'exact' ? '🏠 Matching closely' : '✨ Loose inspiration', env);
+    await sendModelSelector({ ...parsed, sceneRefFileId: `${strength}:${parsed.sceneRefFileId}` }, msgId, env);
     return;
   }
 

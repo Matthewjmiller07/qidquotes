@@ -484,8 +484,43 @@ export function parseSceneRefSelectorMessage(text: string): (ThemedState & {
   };
 }
 
+// Step: after a scene photo is uploaded, ask how literally to use it.
+// Callback values become the 'exact:' / 'loose:' prefix on sceneRefFileId.
+export async function sendSceneRefStrengthSelector(
+  state: ThemedState & { sceneRefFileId: string },
+  replyToMessageId: number,
+  env: Env,
+) {
+  await fetch(api(env.TELEGRAM_BOT_TOKEN, 'sendMessage'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: CHAT_ID,
+      text: `🖼️ STRENGTH [${encodeThemedState(state)}||${state.sceneRefFileId}]\nHow closely should the card follow this picture?`,
+      reply_to_message_id: replyToMessageId,
+      reply_markup: { inline_keyboard: [[
+        { text: '🏠 Match it closely', callback_data: 'sceneref_strength:exact' },
+        { text: '✨ Just inspire',     callback_data: 'sceneref_strength:loose' },
+      ]] },
+    }),
+  });
+}
+
+export function parseSceneRefStrengthMessage(text: string): (ThemedState & {
+  secondChildName: string; secondQuoteText: string; dialogOrder: string; sceneRefFileId: string;
+}) | null {
+  const m = text.match(/^🖼️ STRENGTH \[([^|]+)\|(.+?)\|\|([^|]*)\|\|([^|]*)\|\|(eggcorn|lie|none|true|false)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^|\]]*)\|\|([^\]]+)\]/);
+  if (!m) return null;
+  return {
+    childName: m[1], quoteText: m[2], dateStr: m[3], sceneHint: m[4],
+    tag: decodeTag(m[5]), uploadedFileId: m[6],
+    secondChildName: m[7], secondQuoteText: m[8], dialogOrder: m[9], theme: m[10],
+    sceneRefFileId: m[11],
+  };
+}
+
 // Step: ask which engine to render with — final step before generation.
-// sceneRefFileId is the optional scene-inspiration photo from the previous step.
+// sceneRefFileId is the optional scene photo, prefixed 'exact:' or 'loose:' (bare = loose).
 export async function sendModelSelector(
   state: ThemedState & { sceneRefFileId?: string },
   replyToMessageId: number,
