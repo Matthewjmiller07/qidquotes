@@ -1067,6 +1067,35 @@ export async function handleRegenBatch(request: Request, env: Env, workerOrigin:
   return Response.json({ ok: true, submitted: rows });
 }
 
+// ─── /archive — move expiring Replicate URLs in a row into Google Photos ──────
+// For cards whose Photos upload failed (e.g. 429) and got a replicate.delivery URL
+// written to the sheet instead; those links die after about an hour.
+
+export async function handleArchiveRows(request: Request, env: Env): Promise<Response> {
+  const json = await request.json() as { secret?: string; rows?: number[] };
+  if (!env.RERUN_SECRET || json.secret !== env.RERUN_SECRET) {
+    return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
+  const results: Record<number, string> = {};
+  for (const row of json.rows ?? []) {
+    try {
+      const rowData = await readQuoteRow(row, env);
+      // Newest image is the rightmost; older columns may hold long-dead Replicate links.
+      let idx = -1;
+      rowData.forEach((v, i) => { if (v?.includes('replicate.delivery')) idx = i; });
+      if (idx < 0) { results[row] = 'no replicate URL'; continue; }
+      const { bytes, contentType } = await fetchImageBytes(rowData[idx].trim());
+      const caption = `✨ "${rowData[3]?.trim() ?? ''}" — ${rowData[2]?.trim() ?? ''}`;
+      const photosUrl = await uploadToGooglePhotos(bytes, contentType, caption, env);
+      await updateQuoteImage(row, String.fromCharCode(65 + idx), photosUrl, env);
+      results[row] = 'archived';
+    } catch (err) {
+      results[row] = err instanceof Error ? err.message : String(err);
+    }
+  }
+  return Response.json({ ok: true, results });
+}
+
 // ─── /rerun endpoint — called from Google Sheets Apps Script ─────────────────
 
 export async function handleRerun(request: Request, env: Env): Promise<Response> {

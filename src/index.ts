@@ -1,4 +1,4 @@
-import { handleUpdate, handleRerun, handleRegenBatch, handleReplicateWebhook, handleSyncPeople } from './handler';
+import { handleUpdate, handleRerun, handleRegenBatch, handleArchiveRows, handleReplicateWebhook, handleSyncPeople } from './handler';
 import { handleWeatherWebhook, handleZmanimWebhook } from './weather';
 import type { Env } from './types';
 
@@ -15,6 +15,10 @@ export default {
 
     if (url.pathname === '/regen') {
       return handleRegenBatch(request, env, workerOrigin);
+    }
+
+    if (url.pathname === '/archive') {
+      return handleArchiveRows(request, env);
     }
 
     if (url.pathname === '/sync-people') {
