@@ -442,27 +442,61 @@ export function parseThemeSelectorMessage(text: string): {
   };
 }
 
-// Step: after a theme is chosen, ask which engine to render with — final step before generation.
-export async function sendModelSelector(
-  state: {
-    childName: string; quoteText: string; dateStr: string; sceneHint: string;
-    tag: string; uploadedFileId: string;
-    secondChildName?: string; secondQuoteText?: string; dialogOrder?: string;
-    theme: string;
-  },
-  replyToMessageId: number,
-  env: Env,
-) {
+interface ThemedState {
+  childName: string; quoteText: string; dateStr: string; sceneHint: string;
+  tag: string; uploadedFileId: string;
+  secondChildName?: string; secondQuoteText?: string; dialogOrder?: string;
+  theme: string;
+}
+
+function encodeThemedState(state: ThemedState): string {
   const {
     childName, quoteText, dateStr, sceneHint, tag, uploadedFileId,
     secondChildName = '', secondQuoteText = '', dialogOrder = '', theme,
   } = state;
+  return `${childName}|${quoteText}||${dateStr}||${sceneHint}||${tag || 'none'}||${uploadedFileId}||${secondChildName}||${secondQuoteText}||${dialogOrder}||${theme}`;
+}
+
+// Step: after a theme is chosen, offer an optional scene reference image. The user replies
+// to this message with a photo (handled in handleMessage) or taps Skip.
+export async function sendSceneRefSelector(state: ThemedState, replyToMessageId: number, env: Env) {
   await fetch(api(env.TELEGRAM_BOT_TOKEN, 'sendMessage'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       chat_id: CHAT_ID,
-      text: `🤖 MODEL [${childName}|${quoteText}||${dateStr}||${sceneHint}||${tag || 'none'}||${uploadedFileId}||${secondChildName}||${secondQuoteText}||${dialogOrder}||${theme}]\nChoose quality:`,
+      text: `🖼️ SCENE REF [${encodeThemedState(state)}]\nWant an image to inspire the scene (setting, objects, mood)? ↩️ Reply to THIS message with a photo — people will still look like their own photos. Or skip:`,
+      reply_to_message_id: replyToMessageId,
+      reply_markup: { inline_keyboard: [[{ text: '⏭️ Skip', callback_data: 'sceneref:skip' }]] },
+    }),
+  });
+}
+
+export function parseSceneRefSelectorMessage(text: string): (ThemedState & {
+  secondChildName: string; secondQuoteText: string; dialogOrder: string;
+}) | null {
+  const m = text.match(/^🖼️ SCENE REF \[([^|]+)\|(.+?)\|\|([^|]*)\|\|([^|]*)\|\|(eggcorn|lie|none|true|false)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^\]]*)\]/);
+  if (!m) return null;
+  return {
+    childName: m[1], quoteText: m[2], dateStr: m[3], sceneHint: m[4],
+    tag: decodeTag(m[5]), uploadedFileId: m[6],
+    secondChildName: m[7], secondQuoteText: m[8], dialogOrder: m[9], theme: m[10],
+  };
+}
+
+// Step: ask which engine to render with — final step before generation.
+// sceneRefFileId is the optional scene-inspiration photo from the previous step.
+export async function sendModelSelector(
+  state: ThemedState & { sceneRefFileId?: string },
+  replyToMessageId: number,
+  env: Env,
+) {
+  await fetch(api(env.TELEGRAM_BOT_TOKEN, 'sendMessage'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: CHAT_ID,
+      text: `🤖 MODEL [${encodeThemedState(state)}||${state.sceneRefFileId ?? ''}]\nChoose quality:`,
       reply_to_message_id: replyToMessageId,
       reply_markup: {
         inline_keyboard: [[
@@ -478,13 +512,16 @@ export function parseModelSelectorMessage(text: string): {
   childName: string; quoteText: string; dateStr: string; sceneHint: string;
   tag: string; uploadedFileId: string;
   secondChildName: string; secondQuoteText: string; dialogOrder: string; theme: string;
+  sceneRefFileId: string;
 } | null {
-  const m = text.match(/^🤖 MODEL \[([^|]+)\|(.+?)\|\|([^|]*)\|\|([^|]*)\|\|(eggcorn|lie|none|true|false)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^\]]*)\]/);
+  // Trailing sceneRefFileId is optional so buttons on messages sent before it existed still work.
+  const m = text.match(/^🤖 MODEL \[([^|]+)\|(.+?)\|\|([^|]*)\|\|([^|]*)\|\|(eggcorn|lie|none|true|false)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^|]*)\|\|([^|\]]*)(?:\|\|([^\]]*))?\]/);
   if (!m) return null;
   return {
     childName: m[1], quoteText: m[2], dateStr: m[3], sceneHint: m[4],
     tag: decodeTag(m[5]), uploadedFileId: m[6],
     secondChildName: m[7], secondQuoteText: m[8], dialogOrder: m[9], theme: m[10],
+    sceneRefFileId: m[11] ?? '',
   };
 }
 

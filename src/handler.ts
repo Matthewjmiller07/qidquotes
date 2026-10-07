@@ -30,6 +30,8 @@ import {
   parseDialogOrderMessage,
   sendThemeSelector,
   parseThemeSelectorMessage,
+  sendSceneRefSelector,
+  parseSceneRefSelectorMessage,
   sendModelSelector,
   parseModelSelectorMessage,
   sendRegenThemeSelector,
@@ -81,6 +83,29 @@ async function handleMessage(
 
   // Support photos with captions (caption plays the role of text)
   const text = (message.text ?? message.caption ?? '').trim();
+
+  // Largest photo size has the best quality; used as uploaded reference image
+  const uploadedFileId = message.photo?.length
+    ? message.photo[message.photo.length - 1].file_id
+    : '';
+  const repliedText = message.reply_to_message?.text ?? '';
+
+  // ── Photo replies — usually sent without a caption, so handled before the text check ──
+  // Flow G: regen reference photo upload reply
+  if (repliedText.startsWith('📸 REGEN [') && uploadedFileId) {
+    const parsed = parseRegenUploadPrompt(repliedText);
+    if (!parsed) return;
+    await sendRegenThemeSelector(parsed.row, 'uploaded', uploadedFileId, message.message_id, env);
+    return;
+  }
+  // Flow I: scene reference photo reply — inspires the scene, not the people
+  if (repliedText.startsWith('🖼️ SCENE REF [') && uploadedFileId) {
+    const parsed = parseSceneRefSelectorMessage(repliedText);
+    if (!parsed) return;
+    await sendModelSelector({ ...parsed, sceneRefFileId: uploadedFileId }, message.message_id, env);
+    return;
+  }
+
   if (!text) return;
 
   // Weather + zmanim commands
@@ -100,11 +125,6 @@ async function handleMessage(
     await handleMoveCommand(text, env);
     return;
   }
-
-  // Largest photo size has the best quality; used as uploaded reference image
-  const uploadedFileId = message.photo?.length
-    ? message.photo[message.photo.length - 1].file_id
-    : '';
 
   // ── Flow A: pre-tagged  Aviya||quote  or  Aviya|dd/mm/yyyy|quote ──────────
   if (text.includes('||')) {
@@ -135,8 +155,6 @@ async function handleMessage(
     await sendTagSelector(childName, quoteText, customDate ?? '', sceneHint, message.message_id, env, uploadedFileId);
     return;
   }
-
-  const repliedText = message.reply_to_message?.text ?? '';
 
   // ── Flow D: date reply ───────────────────────────────────────────────────
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text) && repliedText.startsWith('📅 [')) {
@@ -177,14 +195,6 @@ async function handleMessage(
       console.error('addNameToSheet error:', err);
     }
     await sendDateSelector(parsed.customName, parsed.quoteText, parsed.sceneHint, parsed.originalMsgId, env, parsed.uploadedFileId);
-    return;
-  }
-
-  // ── Flow G: regen reference photo upload reply ───────────────────────────
-  if (repliedText.startsWith('📸 REGEN [') && uploadedFileId) {
-    const parsed = parseRegenUploadPrompt(repliedText);
-    if (!parsed) return;
-    await sendRegenThemeSelector(parsed.row, 'uploaded', uploadedFileId, message.message_id, env);
     return;
   }
 
@@ -514,7 +524,7 @@ async function handleCallbackQuery(
     return;
   }
 
-  // ── Theme selected → ask which engine to use ─────────────────────────────
+  // ── Theme selected → offer an optional scene reference image ─────────────
   if (data.startsWith('theme:')) {
     const theme = data.replace('theme:', '');
     const msgText = cb.message?.text ?? '';
@@ -529,7 +539,19 @@ async function handleCallbackQuery(
     };
     const themeLabel = themeLabels[theme] ?? theme;
     await answerCallbackQuery(cb.id, `${themeLabel} selected!`, env);
-    await sendModelSelector({ ...parsed, theme }, msgId, env);
+    await sendSceneRefSelector({ ...parsed, theme }, msgId, env);
+    return;
+  }
+
+  // ── Scene reference skipped → ask which engine to use ────────────────────
+  if (data === 'sceneref:skip') {
+    const msgText = cb.message?.text ?? '';
+    const parsed = parseSceneRefSelectorMessage(msgText);
+    if (!parsed) return;
+    const msgId = cb.message?.message_id;
+    if (!msgId) return;
+    await answerCallbackQuery(cb.id, '⏭️ No scene image', env);
+    await sendModelSelector(parsed, msgId, env);
     return;
   }
 
@@ -554,14 +576,14 @@ async function handleCallbackQuery(
         ?? { name: parsed.secondChildName, birthday: null, defaultSceneHint: '', photoUrls: [] };
       await answerCallbackQuery(cb.id, `${modelLabel} — generating dialog card!`, env);
       await sendMessage(`✅ Generating dialog card for ${parsed.childName} & ${parsed.secondChildName} (${themeLabel}, ${modelLabel})...`, env);
-      await processDialogQuote(child, parsed.quoteText, secondChild, parsed.secondQuoteText, parsed.dialogOrder as 'before' | 'after', env, workerOrigin, parsed.dateStr || undefined, children, parsed.tag, parsed.sceneHint || undefined, parsed.uploadedFileId, parsed.theme, model);
+      await processDialogQuote(child, parsed.quoteText, secondChild, parsed.secondQuoteText, parsed.dialogOrder as 'before' | 'after', env, workerOrigin, parsed.dateStr || undefined, children, parsed.tag, parsed.sceneHint || undefined, parsed.uploadedFileId, parsed.theme, model, parsed.sceneRefFileId || undefined);
     } else {
       const child: ChildInfo = children.find(c => c.name === parsed.childName)
         ?? (parsed.uploadedFileId ? { name: parsed.childName, birthday: null, defaultSceneHint: '', photoUrls: [] } : null as never);
       if (!child) return;
       await answerCallbackQuery(cb.id, `${modelLabel} selected!`, env);
       await sendMessage(`✅ Generating ${parsed.childName}'s quote card (${themeLabel}, ${modelLabel})...`, env);
-      await processQuote(child, parsed.quoteText, env, workerOrigin, parsed.dateStr || undefined, children, parsed.tag, parsed.sceneHint || undefined, parsed.uploadedFileId, parsed.theme, model);
+      await processQuote(child, parsed.quoteText, env, workerOrigin, parsed.dateStr || undefined, children, parsed.tag, parsed.sceneHint || undefined, parsed.uploadedFileId, parsed.theme, model, parsed.sceneRefFileId || undefined);
     }
     return;
   }
@@ -706,6 +728,7 @@ async function processQuote(
   uploadedFileId?: string,
   theme?: string,
   model: 'gpt' | 'flux' = 'gpt',
+  sceneRefFileId?: string,
 ) {
   const quoteDate = customDate ? parseDDMMYYYY(customDate) : new Date();
   void quoteDate; // used below via customDate string
@@ -750,9 +773,9 @@ async function processQuote(
 
   try {
     if (model === 'flux') {
-      await submitBudgetQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, undefined, undefined, undefined, theme);
+      await submitBudgetQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, undefined, undefined, undefined, theme, sceneRefFileId);
     } else {
-      await submitQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, undefined, undefined, undefined, theme);
+      await submitQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, undefined, undefined, undefined, theme, sceneRefFileId);
     }
   } catch (err) {
     console.error('Image generation submit error:', err);
@@ -777,6 +800,7 @@ async function processDialogQuote(
   uploadedFileId?: string,
   theme?: string,
   model: 'gpt' | 'flux' = 'gpt',
+  sceneRefFileId?: string,
 ) {
   const quoteDate = customDate ? parseDDMMYYYY(customDate) : new Date();
   const effectiveSceneHint = sceneHint || child.defaultSceneHint || undefined;
@@ -824,9 +848,9 @@ async function processDialogQuote(
   const webhookUrl = `${workerOrigin}/webhook/replicate?${params}`;
   try {
     if (model === 'flux') {
-      await submitBudgetQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, secondChild, secondQuoteText, dialogOrder, theme);
+      await submitBudgetQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, secondChild, secondQuoteText, dialogOrder, theme, sceneRefFileId);
     } else {
-      await submitQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, secondChild, secondQuoteText, dialogOrder, theme);
+      await submitQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, allPeople, tag, effectiveSceneHint, uploadedFileId, undefined, secondChild, secondQuoteText, dialogOrder, theme, sceneRefFileId);
     }
   } catch (err) {
     console.error('Dialog image generation submit error:', err);

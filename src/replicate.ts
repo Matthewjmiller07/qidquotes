@@ -89,6 +89,7 @@ async function buildSceneContext(
   referenceImageUrl: string | undefined,
   secondChild: ChildInfo | undefined,
   theme: string | undefined,
+  sceneRefFileId: string | undefined,
 ): Promise<SceneContext> {
   const adultSayer = isAdult(child.birthday);
   const { name: sayerName, photoUrls } = child;
@@ -183,6 +184,20 @@ async function buildSceneContext(
       referenceImages.push(await fetchPhotoAsDataUri(url));
     } catch (err) {
       console.error(`Could not load ${secondChild.name} photo for dialog:`, err);
+    }
+  }
+
+  // Scene reference goes last and is labelled by its actual position, so it can't be
+  // confused with a person even if an earlier photo failed to load.
+  if (sceneRefFileId) {
+    try {
+      referenceImages.push(await fetchTelegramPhotoAsDataUri(sceneRefFileId, env));
+      imageLines.push(
+        `Reference image ${referenceImages.length} is scene inspiration only: use it to shape the setting, objects, composition and mood. ` +
+        `Do not take anyone's appearance from it — every person must look like their own reference image or description.`,
+      );
+    } catch (err) {
+      console.error(`Could not load scene reference ${sceneRefFileId}:`, err);
     }
   }
 
@@ -283,8 +298,9 @@ async function buildInput(
   secondQuoteText?: string,
   dialogOrder?: 'before' | 'after',
   theme?: string,
+  sceneRefFileId?: string,
 ): Promise<Record<string, unknown>> {
-  const ctx = await buildSceneContext(child, quoteText, quoteDate, allPeople, env, sceneHint, uploadedFileId, referenceImageUrl, secondChild, theme);
+  const ctx = await buildSceneContext(child, quoteText, quoteDate, allPeople, env, sceneHint, uploadedFileId, referenceImageUrl, secondChild, theme, sceneRefFileId);
   const prompt = buildCardPrompt(ctx, quoteText, quoteDate, tag, sceneHint, secondChild, secondQuoteText, dialogOrder);
 
   // No openai_api_key — Replicate bills the run. (A BYO key that OpenAI rejects surfaces
@@ -317,8 +333,9 @@ export async function submitBudgetQuoteImageAsync(
   secondQuoteText?: string,
   dialogOrder?: 'before' | 'after',
   theme?: string,
+  sceneRefFileId?: string,
 ): Promise<void> {
-  const input = await buildInput(child, quoteText, quoteDate ?? new Date(), allPeople, env, tag, sceneHint, uploadedFileId, referenceImageUrl, secondChild, secondQuoteText, dialogOrder, theme);
+  const input = await buildInput(child, quoteText, quoteDate ?? new Date(), allPeople, env, tag, sceneHint, uploadedFileId, referenceImageUrl, secondChild, secondQuoteText, dialogOrder, theme, sceneRefFileId);
   const res = await fetch(
     'https://api.replicate.com/v1/models/openai/gpt-image-1-mini/predictions',
     {
@@ -352,8 +369,9 @@ export async function submitQuoteImageAsync(
   secondQuoteText?: string,
   dialogOrder?: 'before' | 'after',
   theme?: string,
+  sceneRefFileId?: string,
 ): Promise<void> {
-  const input = await buildInput(child, quoteText, quoteDate ?? new Date(), allPeople, env, tag, sceneHint, uploadedFileId, referenceImageUrl, secondChild, secondQuoteText, dialogOrder, theme);
+  const input = await buildInput(child, quoteText, quoteDate ?? new Date(), allPeople, env, tag, sceneHint, uploadedFileId, referenceImageUrl, secondChild, secondQuoteText, dialogOrder, theme, sceneRefFileId);
   const res = await fetch(
     'https://api.replicate.com/v1/models/openai/gpt-image-2/predictions',
     {
