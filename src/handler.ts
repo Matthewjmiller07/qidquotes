@@ -779,7 +779,7 @@ async function processQuote(
     }
   }
 
-  const params = new URLSearchParams({ child: child.name, quote: quoteText, row: String(row), col: 'G', model, src: 'api' });
+  const params = new URLSearchParams({ child: child.name, quote: quoteText, row: String(row), col: 'G', model });
   if (customDate) params.set('date', customDate);
   if (tag) params.set('tag', tag);
   if (effectiveSceneHint) params.set('sceneHint', effectiveSceneHint);
@@ -1274,6 +1274,7 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
     row: String(row),
     col: 'G',
     model,
+    src: 'api',
     date: json.date ?? '',
     tag,
     sceneHint,
