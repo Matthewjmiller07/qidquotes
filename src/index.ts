@@ -1,13 +1,18 @@
-import { handleUpdate, handleRerun, handleRegenBatch, handleArchiveRows, handleReplicateWebhook, handleSyncPeople, handleSubmitQuote } from './handler';
+import { handleUpdate, handleRerun, handleRegenBatch, handleArchiveRows, handleReplicateWebhook, handleSyncPeople, handleSubmitQuote, handleQuoteStatus } from './handler';
 import { handleWeatherWebhook, handleZmanimWebhook } from './weather';
 import type { Env } from './types';
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (request.method !== 'POST') return new Response('OK');
-
     const url = new URL(request.url);
     const workerOrigin = url.origin;
+
+    // Read-only status probe — allowed over GET so simple clients can poll it.
+    if (url.pathname === '/quote-status') {
+      return handleQuoteStatus(request, env);
+    }
+
+    if (request.method !== 'POST') return new Response('OK');
 
     if (url.pathname === '/rerun') {
       return handleRerun(request, env);

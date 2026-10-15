@@ -1255,6 +1255,48 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
   return Response.json({ ok: true, row, refImageUrl: refImageUrl ?? null });
 }
 
+// ─── /quote-status — poll a Quotes row for its generated card image ─────────
+// Lets an API client fetch the finished card without Telegram/Sheets access.
+// GET /quote-status?row=465 — auth via X-Rerun-Secret header or ?secret=.
+// Response: { ok, row, child, quote, status: 'pending'|'done', images[] }
+// Images listed are generated card URLs (Imgur ref-image uploads excluded).
+
+export async function handleQuoteStatus(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const secret = request.headers.get('X-Rerun-Secret') ?? url.searchParams.get('secret') ?? '';
+  if (!env.RERUN_SECRET || secret !== env.RERUN_SECRET) {
+    return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
+  const row = parseInt(url.searchParams.get('row') ?? '0', 10);
+  if (!Number.isInteger(row) || row < 2) {
+    return Response.json({ ok: false, error: 'Missing row' }, { status: 400 });
+  }
+
+  let rowData: string[];
+  try {
+    rowData = await readQuoteRow(row, env);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return Response.json({ ok: false, error: `Sheets read failed: ${msg}` }, { status: 502 });
+  }
+
+  // New layout: image columns start at G (index 6). Exclude Imgur URLs —
+  // those are reference-image uploads, not generated cards.
+  const images = rowData
+    .slice(6)
+    .map((s) => (s ?? '').trim())
+    .filter((s) => s.startsWith('https://') && !s.includes('imgur.com'));
+
+  return Response.json({
+    ok: true,
+    row,
+    child: rowData[2]?.trim() ?? '',
+    quote: rowData[3]?.trim() ?? '',
+    status: images.length > 0 ? 'done' : 'pending',
+    images,
+  });
+}
+
 // ─── /archive — move expiring Replicate URLs in a row into Google Photos ──────
 // For cards whose Photos upload failed (e.g. 429) and got a replicate.delivery URL
 // written to the sheet instead; those links die after about an hour.
