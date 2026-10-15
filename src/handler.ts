@@ -1017,6 +1017,14 @@ export async function handleReplicateWebhook(bodyText: string, url: URL, env: En
         (err) => console.error('Webhook sheet Imgur update error:', err),
       );
     }
+    if (src === 'api' && replicateUrl.startsWith('https://')) {
+      // Public, short-lived Replicate URL so API clients can pull the card
+      // directly (expires ~1h; the Photos URL stays the permanent archive).
+      const replCol = String.fromCharCode(col.charCodeAt(0) + 2);
+      await updateQuoteImage(row, replCol, replicateUrl, env).catch(
+        (err) => console.error('Webhook sheet Replicate URL update error:', err),
+      );
+    }
   }
   if (row2 > 0) {
     await updateQuoteImage(row2, col2, finalUrl, env).catch(
@@ -1294,8 +1302,9 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
 // GET /quote-status?probe=imgur — diagnostic: tests both Imgur upload methods
 //   from the worker and reports which succeeds (1px test image, harmless).
 // Response: { ok, row, child, quote, status: 'pending'|'done', cardUrl, images[] }
-// cardUrl is the public Imgur copy when the row came from /submit-quote
-// (Photos URLs need a Google login); images lists every image cell, Imgur first.
+// cardUrl is the public Imgur copy when present, else the fresh Replicate URL
+// (the webhook stores it for /submit-quote rows; expires ~1h), else the Photos
+// URL (needs Google login); images lists every image cell in that preference order.
 
 const PROBE_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -1346,16 +1355,19 @@ export async function handleQuoteStatus(request: Request, env: Env): Promise<Res
     return Response.json({ ok: false, error: `Sheets read failed: ${msg}` }, { status: 502 });
   }
 
-  // New layout: image columns start at G (index 6). Imgur URLs on API rows are
-  // the public generated-card copies (the webhook stores one next to the Photos
-  // URL); list them first so clients grab the login-free one.
+  // New layout: image columns start at G (index 6). Order for clients:
+  // Imgur copy (permanent, public) → Replicate URL (public, ~1h expiry) →
+  // Photos URL (permanent, needs Google login).
   const allImages = rowData
     .slice(6)
     .map((s) => (s ?? '').trim())
     .filter((s) => s.startsWith('https://'));
+  const isImgur = (s: string) => s.includes('imgur.com');
+  const isReplicate = (s: string) => s.includes('replicate.delivery');
   const images = [
-    ...allImages.filter((s) => s.includes('imgur.com')),
-    ...allImages.filter((s) => !s.includes('imgur.com')),
+    ...allImages.filter(isImgur),
+    ...allImages.filter((s) => !isImgur(s) && isReplicate(s)),
+    ...allImages.filter((s) => !isImgur(s) && !isReplicate(s)),
   ];
   const cardUrl = images[0] ?? null;
 
