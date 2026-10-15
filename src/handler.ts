@@ -1106,6 +1106,155 @@ export async function handleRegenBatch(request: Request, env: Env, workerOrigin:
   return Response.json({ ok: true, submitted: rows });
 }
 
+// ─── /submit-quote — programmatic quote submission (no Telegram needed) ──────
+// Appends a new Quotes row, then runs the normal async generation flow: the
+// existing /webhook/replicate completion handler posts the card to Telegram,
+// archives it to Google Photos, and writes the image URL into the sheet.
+// Body: { secret, childName, quoteText, date? (dd/mm/yyyy), tag?, sceneHint?,
+//         refImageUrl?, refImageBase64?, theme?, model? ('gpt' | 'flux') }
+// The reference image overrides the child's default sheet photos for this card.
+
+async function uploadBase64ToImgur(base64: string, clientId: string): Promise<string> {
+  const res = await fetch('https://api.imgur.com/3/image', {
+    method: 'POST',
+    headers: {
+      Authorization: `Client-ID ${clientId}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({ image: base64, type: 'base64' }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Imgur base64 upload failed: ${res.status} ${body}`);
+  }
+  const data = await res.json() as { data: { link: string } };
+  return data.data.link;
+}
+
+export async function handleSubmitQuote(request: Request, env: Env, workerOrigin: string): Promise<Response> {
+  const json = await request.json() as {
+    secret?: string;
+    childName?: string;
+    quoteText?: string;
+    date?: string; // dd/mm/yyyy
+    tag?: string; // 'eggcorn' | 'lie' | ''
+    sceneHint?: string;
+    refImageUrl?: string;
+    refImageBase64?: string;
+    sceneRefImageUrl?: string;
+    sceneRefImageBase64?: string;
+    sceneRefStrength?: 'exact' | 'loose';
+    theme?: string;
+    model?: 'gpt' | 'flux';
+  };
+  const headerSecret = request.headers.get('X-Rerun-Secret') ?? '';
+  if (!env.RERUN_SECRET || (json.secret !== env.RERUN_SECRET && headerSecret !== env.RERUN_SECRET)) {
+    return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
+  }
+  const { childName, quoteText } = json;
+  if (!childName || !quoteText) {
+    return Response.json({ ok: false, error: 'Missing childName or quoteText' }, { status: 400 });
+  }
+  const tag = json.tag ?? '';
+  const sceneHint = json.sceneHint ?? '';
+  const theme = json.theme;
+  const model = json.model ?? 'gpt';
+
+  let children: ChildInfo[];
+  try {
+    children = await loadChildren(env);
+  } catch (err) {
+    return Response.json({ ok: false, error: 'Failed to load children from sheets' }, { status: 500 });
+  }
+  const child = children.find((c) => c.name === childName);
+  if (!child) {
+    return Response.json({ ok: false, error: `Unknown child: ${childName}` }, { status: 400 });
+  }
+
+  // Resolve the reference image: explicit URL wins; base64 gets hosted on Imgur
+  // (server-side, using the worker's IMGUR_CLIENT_ID) so generation can fetch it.
+  let refImageUrl = (json.refImageUrl ?? '').trim() || undefined;
+  if (!refImageUrl && json.refImageBase64) {
+    if (!env.IMGUR_CLIENT_ID) {
+      return Response.json({ ok: false, error: 'refImageBase64 needs IMGUR_CLIENT_ID' }, { status: 400 });
+    }
+    try {
+      refImageUrl = await uploadBase64ToImgur(json.refImageBase64, env.IMGUR_CLIENT_ID);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return Response.json({ ok: false, error: `Reference image upload failed: ${msg}` }, { status: 502 });
+    }
+  }
+  if (refImageUrl) {
+    await addPhotoToNamesTab(childName, refImageUrl, env).catch((err) =>
+      console.error('submit-quote addPhotoToNamesTab error:', err),
+    );
+  }
+
+  // Optional scene reference (background inspiration, like the Telegram flow's
+  // scene ref): base64 gets hosted on Imgur; passed as "<strength>:<url>".
+  let sceneRef: string | undefined;
+  {
+    let sceneRefUrl = (json.sceneRefImageUrl ?? '').trim() || undefined;
+    if (!sceneRefUrl && json.sceneRefImageBase64) {
+      if (!env.IMGUR_CLIENT_ID) {
+        return Response.json({ ok: false, error: 'sceneRefImageBase64 needs IMGUR_CLIENT_ID' }, { status: 400 });
+      }
+      try {
+        sceneRefUrl = await uploadBase64ToImgur(json.sceneRefImageBase64, env.IMGUR_CLIENT_ID);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return Response.json({ ok: false, error: `Scene ref image upload failed: ${msg}` }, { status: 502 });
+      }
+    }
+    if (sceneRefUrl) {
+      const strength = json.sceneRefStrength === 'exact' ? 'exact' : 'loose';
+      sceneRef = `${strength}:${sceneRefUrl}`;
+    }
+  }
+
+  // 1. New sheet row (images start at col G in the new layout).
+  let row: number;
+  try {
+    row = await appendQuote(childName, quoteText, '', env, json.date, tag, sceneHint);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return Response.json({ ok: false, error: `Sheets append failed: ${msg}` }, { status: 502 });
+  }
+  if (!row) {
+    return Response.json({ ok: false, error: 'Sheets append returned no row' }, { status: 502 });
+  }
+
+  // 2. Fire the normal async generation flow (same params as triggerRegen).
+  const quoteDate = json.date ? parseDDMMYYYY(json.date) : new Date();
+  const params = new URLSearchParams({
+    child: childName,
+    quote: quoteText,
+    row: String(row),
+    col: 'G',
+    model,
+    date: json.date ?? '',
+    tag,
+    sceneHint,
+    referenceUrl: refImageUrl ?? '',
+  });
+  const webhookUrl = `${workerOrigin}/webhook/replicate?${params}`;
+
+  await sendMessage(`🎨 Generating ${childName}'s quote card...`, env).catch(() => {});
+  try {
+    if (model === 'flux') {
+      await submitBudgetQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, children, tag, sceneHint || undefined, undefined, refImageUrl, undefined, undefined, undefined, theme, sceneRef);
+    } else {
+      await submitQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, children, tag, sceneHint || undefined, undefined, refImageUrl, undefined, undefined, undefined, theme, sceneRef);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return Response.json({ ok: false, error: `Replicate submit failed: ${msg}`, row }, { status: 502 });
+  }
+
+  return Response.json({ ok: true, row, refImageUrl: refImageUrl ?? null });
+}
+
 // ─── /archive — move expiring Replicate URLs in a row into Google Photos ──────
 // For cards whose Photos upload failed (e.g. 429) and got a replicate.delivery URL
 // written to the sheet instead; those links die after about an hour.

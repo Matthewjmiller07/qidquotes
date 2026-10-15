@@ -194,7 +194,12 @@ async function buildSceneContext(
     const exact = sceneRefFileId.startsWith('exact:');
     const fileId = sceneRefFileId.replace(/^(exact|loose):/, '');
     try {
-      referenceImages.push(await fetchTelegramPhotoAsDataUri(fileId, env));
+      // API submissions pass an https:// URL (Imgur-hosted); the Telegram
+      // flow passes a Telegram file_id.
+      const dataUri = fileId.startsWith('http')
+        ? await fetchPhotoAsDataUri(fileId)
+        : await fetchTelegramPhotoAsDataUri(fileId, env);
+      referenceImages.push(dataUri);
       const n = referenceImages.length;
       imageLines.push(
         (exact
