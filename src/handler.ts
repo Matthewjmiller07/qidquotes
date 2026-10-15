@@ -1154,6 +1154,7 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
     sceneRefImageUrl?: string;
     sceneRefImageBase64?: string;
     sceneRefStrength?: 'exact' | 'loose';
+    extraRefs?: { name?: string; refImageUrl?: string; refImageBase64?: string }[];
     theme?: string;
     model?: 'gpt' | 'flux';
   };
@@ -1223,6 +1224,28 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
     }
   }
 
+  // Optional date-matched reference photos for other people mentioned in the
+  // quote or scene hint (e.g. "tzofia with small siddur"): base64 gets hosted
+  // on Imgur; these override the random Names-tab photo the worker would pick.
+  const extraRefs: { name: string; url: string }[] = [];
+  for (const er of json.extraRefs ?? []) {
+    const nm = (er?.name ?? '').trim();
+    if (!nm) continue;
+    let u = (er?.refImageUrl ?? '').trim() || undefined;
+    if (!u && er?.refImageBase64) {
+      if (!env.IMGUR_CLIENT_ID) {
+        return Response.json({ ok: false, error: 'extraRefs base64 needs IMGUR_CLIENT_ID' }, { status: 400 });
+      }
+      try {
+        u = await uploadBase64ToImgur(er.refImageBase64, env.IMGUR_CLIENT_ID);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return Response.json({ ok: false, error: `Extra ref image upload failed: ${msg}` }, { status: 502 });
+      }
+    }
+    if (u) extraRefs.push({ name: nm, url: u });
+  }
+
   // 1. New sheet row (images start at col G in the new layout).
   let row: number;
   try {
@@ -1253,9 +1276,9 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
   await sendMessage(`🎨 Generating ${childName}'s quote card...`, env).catch(() => {});
   try {
     if (model === 'flux') {
-      await submitBudgetQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, children, tag, sceneHint || undefined, undefined, refImageUrl, undefined, undefined, undefined, theme, sceneRef);
+      await submitBudgetQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, children, tag, sceneHint || undefined, undefined, refImageUrl, undefined, undefined, undefined, theme, sceneRef, extraRefs);
     } else {
-      await submitQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, children, tag, sceneHint || undefined, undefined, refImageUrl, undefined, undefined, undefined, theme, sceneRef);
+      await submitQuoteImageAsync(child, quoteText, webhookUrl, env, quoteDate, children, tag, sceneHint || undefined, undefined, refImageUrl, undefined, undefined, undefined, theme, sceneRef, extraRefs);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
