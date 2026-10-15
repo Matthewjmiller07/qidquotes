@@ -779,7 +779,7 @@ async function processQuote(
     }
   }
 
-  const params = new URLSearchParams({ child: child.name, quote: quoteText, row: String(row), col: 'G', model });
+  const params = new URLSearchParams({ child: child.name, quote: quoteText, row: String(row), col: 'G', model, src: 'api' });
   if (customDate) params.set('date', customDate);
   if (tag) params.set('tag', tag);
   if (effectiveSceneHint) params.set('sceneHint', effectiveSceneHint);
@@ -889,6 +889,7 @@ export async function handleReplicateWebhook(bodyText: string, url: URL, env: En
     ?? (url.searchParams.get('isEggcorn') === 'true' ? 'eggcorn' : '');
   const sceneHint = url.searchParams.get('sceneHint') ?? '';
   const referenceUrl = url.searchParams.get('referenceUrl') ?? '';
+  const src = url.searchParams.get('src') ?? '';
   // Dialog params (only present for dialog cards)
   const child2Name = url.searchParams.get('child2') ?? '';
   const quote2Text = url.searchParams.get('quote2') ?? '';
@@ -1007,6 +1008,15 @@ export async function handleReplicateWebhook(bodyText: string, url: URL, env: En
     await updateQuoteImage(row, col, finalUrl, env).catch(
       (err) => console.error('Webhook sheet update error:', err),
     );
+    // API submissions (/submit-quote): also store the public Imgur copy of the
+    // card in the next column — Photos URLs need a Google login, Imgur doesn't.
+    // (Telegram-flow rows keep H for the reference image; API rows never use it.)
+    if (src === 'api' && imgurUrl && imgurUrl !== finalUrl) {
+      const nextCol = String.fromCharCode(col.charCodeAt(0) + 1);
+      await updateQuoteImage(row, nextCol, imgurUrl, env).catch(
+        (err) => console.error('Webhook sheet Imgur update error:', err),
+      );
+    }
   }
   if (row2 > 0) {
     await updateQuoteImage(row2, col2, finalUrl, env).catch(
@@ -1258,8 +1268,9 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
 // ─── /quote-status — poll a Quotes row for its generated card image ─────────
 // Lets an API client fetch the finished card without Telegram/Sheets access.
 // GET /quote-status?row=465 — auth via X-Rerun-Secret header or ?secret=.
-// Response: { ok, row, child, quote, status: 'pending'|'done', images[] }
-// Images listed are generated card URLs (Imgur ref-image uploads excluded).
+// Response: { ok, row, child, quote, status: 'pending'|'done', cardUrl, images[] }
+// cardUrl is the public Imgur copy when the row came from /submit-quote
+// (Photos URLs need a Google login); images lists every image cell, Imgur first.
 
 export async function handleQuoteStatus(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -1280,19 +1291,26 @@ export async function handleQuoteStatus(request: Request, env: Env): Promise<Res
     return Response.json({ ok: false, error: `Sheets read failed: ${msg}` }, { status: 502 });
   }
 
-  // New layout: image columns start at G (index 6). Exclude Imgur URLs —
-  // those are reference-image uploads, not generated cards.
-  const images = rowData
+  // New layout: image columns start at G (index 6). Imgur URLs on API rows are
+  // the public generated-card copies (the webhook stores one next to the Photos
+  // URL); list them first so clients grab the login-free one.
+  const allImages = rowData
     .slice(6)
     .map((s) => (s ?? '').trim())
-    .filter((s) => s.startsWith('https://') && !s.includes('imgur.com'));
+    .filter((s) => s.startsWith('https://'));
+  const images = [
+    ...allImages.filter((s) => s.includes('imgur.com')),
+    ...allImages.filter((s) => !s.includes('imgur.com')),
+  ];
+  const cardUrl = images[0] ?? null;
 
   return Response.json({
     ok: true,
     row,
     child: rowData[2]?.trim() ?? '',
     quote: rowData[3]?.trim() ?? '',
-    status: images.length > 0 ? 'done' : 'pending',
+    status: cardUrl ? 'done' : 'pending',
+    cardUrl,
     images,
   });
 }
