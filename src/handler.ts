@@ -1291,9 +1291,21 @@ export async function handleSubmitQuote(request: Request, env: Env, workerOrigin
 // ─── /quote-status — poll a Quotes row for its generated card image ─────────
 // Lets an API client fetch the finished card without Telegram/Sheets access.
 // GET /quote-status?row=465 — auth via X-Rerun-Secret header or ?secret=.
+// GET /quote-status?probe=imgur — diagnostic: tests both Imgur upload methods
+//   from the worker and reports which succeeds (1px test image, harmless).
 // Response: { ok, row, child, quote, status: 'pending'|'done', cardUrl, images[] }
 // cardUrl is the public Imgur copy when the row came from /submit-quote
 // (Photos URLs need a Google login); images lists every image cell, Imgur first.
+
+const PROBE_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
 
 export async function handleQuoteStatus(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -1301,6 +1313,26 @@ export async function handleQuoteStatus(request: Request, env: Env): Promise<Res
   if (!env.RERUN_SECRET || secret !== env.RERUN_SECRET) {
     return Response.json({ ok: false, error: 'Unauthorized' }, { status: 401 });
   }
+
+  if (url.searchParams.get('probe') === 'imgur') {
+    if (!env.IMGUR_CLIENT_ID) {
+      return Response.json({ ok: false, error: 'IMGUR_CLIENT_ID not set' }, { status: 500 });
+    }
+    const out: Record<string, { ok: boolean; url?: string; error?: string }> = {};
+    try {
+      const bytes = base64ToBytes(PROBE_PNG_BASE64);
+      out.multipart = { ok: true, url: await uploadToImgur(bytes.buffer as ArrayBuffer, 'image/png', env.IMGUR_CLIENT_ID) };
+    } catch (err) {
+      out.multipart = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    try {
+      out.urlencoded = { ok: true, url: await uploadBase64ToImgur(PROBE_PNG_BASE64, env.IMGUR_CLIENT_ID) };
+    } catch (err) {
+      out.urlencoded = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    return Response.json({ ok: true, probe: 'imgur', ...out });
+  }
+
   const row = parseInt(url.searchParams.get('row') ?? '0', 10);
   if (!Number.isInteger(row) || row < 2) {
     return Response.json({ ok: false, error: 'Missing row' }, { status: 400 });
